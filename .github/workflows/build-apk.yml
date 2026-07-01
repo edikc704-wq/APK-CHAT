@@ -1,0 +1,139 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      # Repo ini tidak punya folder android/ (cuma lib/ + pubspec.yaml),
+      # padahal "flutter build apk" WAJIB punya folder android/.
+      # Step ini bikin otomatis kalau belum ada.
+      - name: Generate folder android (kalau belum ada)
+        run: |
+          if [ ! -d "android" ]; then
+            echo ">> Folder android/ tidak ditemukan, generate otomatis..."
+            flutter create . --platforms=android --org com.edxzvip --project-name infernal
+          else
+            echo ">> Folder android/ sudah ada, skip generate."
+          fi
+
+      # FIX #1: shared_preferences_android 2.4.7+ butuh Kotlin 1.9.x,
+      # tapi flutter create 3.24.0 menghasilkan Kotlin 1.8.x → incompatible metadata error.
+      # Solusi: upgrade Kotlin ke 1.9.24 di settings.gradle (format Flutter >= 3.19)
+      # atau di build.gradle (format lama).
+      - name: Fix Kotlin version ke 1.9.24
+        run: |
+          if grep -q 'org.jetbrains.kotlin.android' android/settings.gradle 2>/dev/null; then
+            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.24"/' android/settings.gradle
+            echo ">> Kotlin version di settings.gradle berhasil di-update ke 1.9.24"
+            grep 'org.jetbrains.kotlin' android/settings.gradle
+          elif grep -q 'kotlin_version' android/build.gradle 2>/dev/null; then
+            sed -i "s/ext.kotlin_version = '[^']*'/ext.kotlin_version = '1.9.24'/" android/build.gradle
+            echo ">> Kotlin version di build.gradle berhasil di-update ke 1.9.24"
+            grep 'kotlin_version' android/build.gradle
+          else
+            echo ">> WARNING: Kotlin version entry tidak ditemukan"
+            cat android/settings.gradle 2>/dev/null | head -20
+          fi
+
+      # FIX #2 (ROOT CAUSE ERROR SEBELUMNYA — dari screenshot):
+      # Flutter 3.24.0 generate 'compileSdk = flutter.compileSdkVersion' bukan angka.
+      # Pola lama: sed 's/compileSdk = [0-9]*/...' → [0-9]* cocok 0 digit (empty string)
+      # → hasilnya jadi 'compileSdk = 35flutter.compileSdkVersion'
+      # → Groovy baca '35f' sebagai float literal, lalu cari property 'lutter' → CRASH.
+      # FIX: pakai '.*' bukan '[0-9]*' supaya cocok dengan nilai apapun (angka maupun flutter.xxx).
+      - name: Fix compileSdk dan minSdk
+        run: |
+          if grep -q 'compileSdk' android/app/build.gradle; then
+            sed -i 's/compileSdk = .*/compileSdk = 35/' android/app/build.gradle
+            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/' android/app/build.gradle
+            echo ">> compileSdk berhasil di-update ke 35"
+          else
+            echo ">> WARNING: compileSdk tidak ditemukan di app/build.gradle"
+          fi
+          # Pastikan minSdk = 21 (butuh untuk camera & permission_handler)
+          # Sama seperti compileSdk, pakai .* bukan [0-9]* untuk handle flutter.minSdkVersion
+          if grep -q 'minSdk' android/app/build.gradle; then
+            sed -i 's/minSdk = .*/minSdk = 21/' android/app/build.gradle
+            sed -i 's/minSdkVersion [0-9]*/minSdkVersion 21/' android/app/build.gradle
+            echo ">> minSdk berhasil di-set ke 21"
+          fi
+          echo ">> Hasil akhir build.gradle (bagian android {}):"
+          grep -E "compileSdk|minSdk|targetSdk" android/app/build.gradle || true
+
+      # FIX #3: Buat google-services.json (wajib untuk firebase_core di Android).
+      # Nilai diambil dari firebase_options.dart yang sudah ada di repo.
+      - name: Buat google-services.json
+        run: |
+          mkdir -p android/app
+          cat > android/app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "963004829027",
+              "firebase_url": "https://edxzvip-default-rtdb.asia-southeast1.firebasedatabase.app",
+              "project_id": "edxzvip",
+              "storage_bucket": "edxzvip.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:963004829027:android:dd1d4e791a9868d616d756",
+                  "android_client_info": {
+                    "package_name": "com.edxzvip.infernal"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyDuF70h00Vf6Vbqk4YFrqrWyTWOovmn7ms"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+          echo ">> google-services.json berhasil dibuat di android/app/"
+
+      # pubspec.yaml minta folder assets/images/, kalau foldernya kosong/gak ada
+      # build APK bisa gagal pas resolve assets.
+      - name: Pastikan folder assets ada
+        run: mkdir -p assets/images
+
+      # Tambah izin kamera/galeri/internet ke AndroidManifest.xml hasil generate,
+      # supaya kamera & galeri tidak ditolak sistem Android di APK.
+      - name: Tambahkan izin Android yang dibutuhkan
+        run: python3 .github/scripts/add_manifest_permissions.py android/app/src/main/AndroidManifest.xml
+
+      - name: Ambil dependency
+        run: flutter pub get
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Upload APK sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infernal-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

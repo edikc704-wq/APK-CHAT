@@ -1,0 +1,49 @@
+name: infernal
+description: INFERNAL Chat App - Full Native Flutter
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Firebase
+  firebase_core: ^2.27.0
+  firebase_database: ^10.4.0
+
+  # State & local storage (pengganti localStorage)
+  shared_preferences: ^2.2.2
+  provider: ^6.1.2
+
+  # Kamera & file (native, bukan via browser lagi)
+  image_picker: ^1.0.7
+  camera: ^0.10.5+9
+  file_picker: ^6.2.0
+  permission_handler: ^11.3.0
+
+  # Keamanan password
+  crypto: ^3.0.3
+
+  # UI & utilitas
+  cached_network_image: ^3.3.1
+  intl: ^0.19.0
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10+1
+  shimmer: ^3.0.0
+
+  # Anti-bot / device integrity
+  device_info_plus: ^10.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
